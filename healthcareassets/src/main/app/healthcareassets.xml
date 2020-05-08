@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:oauth2="http://www.mulesoft.org/schema/mule/oauth2" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:mulexml="http://www.mulesoft.org/schema/mule/xml" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:microsoft-azure-service-bus="http://www.mulesoft.org/schema/mule/microsoft-azure-service-bus" xmlns:apikit="http://www.mulesoft.org/schema/mule/apikit" xmlns:hl7-edi="http://www.mulesoft.org/schema/mule/hl7-edi" xmlns:mllp="http://www.mulesoft.org/schema/mule/mllp" xmlns:hl7="http://www.mulesoft.org/schema/mule/hl7" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/mllp http://www.mulesoft.org/schema/mule/mllp/current/mule-mllp.xsd
+http://www.mulesoft.org/schema/mule/hl7 http://www.mulesoft.org/schema/mule/hl7/current/mule-hl7.xsd
+http://www.mulesoft.org/schema/mule/microsoft-azure-service-bus http://www.mulesoft.org/schema/mule/microsoft-azure-service-bus/current/mule-microsoft-azure-service-bus.xsd
+http://www.mulesoft.org/schema/mule/hl7-edi http://www.mulesoft.org/schema/mule/hl7-edi/current/mule-hl7-edi.xsd
+http://www.mulesoft.org/schema/mule/apikit http://www.mulesoft.org/schema/mule/apikit/current/mule-apikit.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/xml http://www.mulesoft.org/schema/mule/xml/current/mule-xml.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/oauth2 http://www.mulesoft.org/schema/mule/oauth2/current/mule-oauth2.xsd">
+	<microsoft-azure-service-bus:basic-authentication-config name="Microsoft_Azure_Service_Bus__Basic_authentication" sharedAccessKeyName="RootManageSharedAccessKey" sharedAccessKey="P4+DC2pTbFeNUT/FBoYnFfWCHo0D5pIU4KSsOhGm4Yo=" namespace="hl7-mllp-messages" doc:name="Microsoft Azure Service Bus: Basic authentication"/>
+	<http:request-config name="HTTP_Request_Configuration" protocol="HTTPS" host="learn-fhir-api.azurehealthcareapis.com" port="443" basePath="/Patient" doc:name="HTTP Request Configuration">
+	</http:request-config>
+	<http:request-config name="HTTP_Request_Configuration_Azure_AD" protocol="HTTPS" host="login.microsoftonline.com" port="443" basePath="/010821a7-8e16-48c2-8f9f-d7493fb54a04/oauth2/v2.0" doc:name="HTTP Request Configuration"/>
+		
+	
+	<flow name="healthcareassetsFlow">
+		<mllp:inbound-endpoint host="localhost" port="9999" responseTimeout="10000" exchange-pattern="request-response" doc:name="Receive HL7 over MLLP"/>
+		<microsoft-azure-service-bus:publish config-ref="Microsoft_Azure_Service_Bus__Basic_authentication" destination="QUEUE||hl7-erp-message" messageId="1001" doc:name="Publish HL7 to Azure Service Bus"/>
+		<hl7:ack-component ackCode="CA" validation="WEAK" doc:name="Acknowledge Success"/>
+		<hl7:exception-strategy ackCode="AE" doc:name="Acknowledge Error"/>
+	</flow>
+	<flow name="subscription-flow">
+		<microsoft-azure-service-bus:queue-listener config-ref="Microsoft_Azure_Service_Bus__Basic_authentication" queue="hl7-erp-message" doc:name="Microsoft Azure Service Bus (Streaming)"/>
+		<hl7:hl7-encoding-transformer mimeType="application/xml" hl7Encoding="XML" doc:name="Map to XML from ER7"/>
+		<mulexml:dom-to-xml-transformer doc:name="DOM to XML"/>
+		<dw:transform-message doc:name="Transform Message - Generalize ADT root tag">
+			<dw:set-payload><![CDATA[%dw 1.0
+%output application/xml
+---
+payload mapObject {
+		ADT @(xmlns:"urn:hl7-org:v2xml"): $
+		}]]></dw:set-payload>
+		</dw:transform-message>
+		<dw:transform-message doc:name="Transform Message - Map PID to Patient resource" metadata:id="45c2922e-a42d-4c89-b1af-d8e514317a49">
+			<dw:input-payload mimeType="application/xml" doc:sample="/Users/ksreekanta/Documents/Health-Assets/HL7-Sample.xml"/>
+			<dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+%namespace ns0 urn:hl7-org:v2xml
+---
+{
+	resourceType: "Patient",
+	identifier: [{
+		value: payload.ns0#ADT.ns0#PID.ns0#"PID.3".ns0#"CX.1" as :string
+	}],
+	name: [{
+		family: payload.ns0#ADT.ns0#PID.ns0#"PID.5".ns0#"XPN.1".ns0#"FN.1",
+		given: payload.ns0#ADT.ns0#PID.ns0#"PID.5".ns0#"XPN.5"
+	}],
+		address: payload.ns0#ADT.ns0#PID.*ns0#"PID.11" map ((pID11 , indexOfPID11) -> {
+		type: "both",
+		text: pID11.ns0#"XAD.1".ns0#"SAD.1",
+		city: pID11.ns0#"XAD.3",
+		state: pID11.ns0#"XAD.4",
+		postalCode: pID11.ns0#"XAD.5"
+	})
+}
+]]></dw:set-payload>
+		</dw:transform-message>
+		<logger message="Patient Resource - #[payload]" level="INFO" doc:name="Logger"/>
+		<http:request config-ref="HTTP_Request_Configuration" path="/" method="POST" doc:name="HTTP">
+			<http:request-builder>
+				<http:header headerName="Authorization" value="Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6IkN0VHVoTUptRDVNN0RMZHpEMnYyeDNRS1NSWSIsImtpZCI6IkN0VHVoTUptRDVNN0RMZHpEMnYyeDNRS1NSWSJ9.eyJhdWQiOiJodHRwczovL2xlYXJuLWZoaXItYXBpLmF6dXJlaGVhbHRoY2FyZWFwaXMuY29tIiwiaXNzIjoiaHR0cHM6Ly9zdHMud2luZG93cy5uZXQvMDEwODIxYTctOGUxNi00OGMyLThmOWYtZDc0OTNmYjU0YTA0LyIsImlhdCI6MTU4ODgyOTYzNywibmJmIjoxNTg4ODI5NjM3LCJleHAiOjE1ODg4MzM1MzcsImFjciI6IjEiLCJhaW8iOiJBVVFBdS84UEFBQUFTbVFlZm1TYTlPNm5obm5ZUHYrSnBtdUtrU1h4VW9QQnpSUDEwVDZhTis5U3diWk5MVCtXbFZ0QjRXQXdMTWVzaGNmSnhiQXVkSkdQeU91Tmp2a0NCQT09IiwiYWx0c2VjaWQiOiI1OjoxMDAzMjAwMDZCMEE2MTczIiwiYW1yIjpbInB3ZCJdLCJhcHBpZCI6Ijc5M2JmZGE0LTY3NDgtNDViNi05ZDU3LTk4ZGE3YjQ5ODMzOSIsImFwcGlkYWNyIjoiMSIsImVtYWlsIjoia3NyZWVrYW50YUBkZWxvaXR0ZS5jb20uYXUiLCJmYW1pbHlfbmFtZSI6IlNyZWVrYW50YSIsImdpdmVuX25hbWUiOiJLYXJ0aGlrIiwiaWRwIjoiaHR0cHM6Ly9zdHMud2luZG93cy5uZXQvMzZkYTQ1ZjEtZGQyYy00ZDFmLWFmMTMtNWFiZTQ2Yjk5OTIxLyIsImlwYWRkciI6IjEyMy4yMDguMzQuODIiLCJuYW1lIjoiU3JlZWthbnRhLCBLYXJ0aGlrIiwib2lkIjoiODI4YTE5NDYtOTlkZi00ZjM3LTkzNzktZGJkZGJjMWUwZTdiIiwicHVpZCI6IjEwMDMyMDAwQjlERDEzNDMiLCJzY3AiOiJ1c2VyX2ltcGVyc29uYXRpb24iLCJzdWIiOiJxRTlldDRCdG91QnB1a0duNk9jQjJqT25vcnZYUWV0c0loOG5IU2N6YWtvIiwidGlkIjoiMDEwODIxYTctOGUxNi00OGMyLThmOWYtZDc0OTNmYjU0YTA0IiwidW5pcXVlX25hbWUiOiJrc3JlZWthbnRhQGRlbG9pdHRlLmNvbS5hdSIsInV0aSI6Ik1HSnNNVW5rU1VhdVBZRFJaNDBnQUEiLCJ2ZXIiOiIxLjAifQ.Xr7LDQNPLpY4CXv89TlbOHtW6-Z9LvcojPwdaij4oPIe0u-BDrDudRoqZYFeWgT0z9-zMFJZIgiIchpCk2egyhHIyGWJqcNO-IDVdLvfjYQ9GouYOHtn9sQ6V5VcK_sqp3UOzLQq0LWeZvpIHMF8KGU4zGPWdEp20T_8KETq5h9usJ-ZcP3DMQYxbdSzokZ8bH0XmD0nAufsZJb3GEnAf1Wrka14stIC6G5kY_Ii4SufeZ4Vydy3_5qjw9i4P1Cv6Ud4paXelfFljd_r-nzjrN8byKxVq3xpEg8wQ8BdAFzTaiIkVWAc638WkOcKQUboSDgbADi7bq1WylIZpJOPuw"/>
+				<http:header headerName="Content-Type" value="application/json "/>
+			</http:request-builder>
+			<http:success-status-code-validator values="200..499"/>
+		</http:request>
+		<choice doc:name="Choice">
+			<when expression="#[message.inboundProperties.'http.status'==401]">
+				<logger message="Its 401... relax." level="INFO" doc:name="Logger1"/>
+				<flow-ref name="token-generation-WIP" doc:name="token-generation"/>
+			</when>
+			<otherwise>
+				<logger message="Its not 401!! - #[message.inboundProperties.'http.status']" level="INFO" doc:name="Logger"/>
+			</otherwise>
+		</choice>
+	</flow>
+	<flow name="token-generation-WIP">
+		<http:request config-ref="HTTP_Request_Configuration_Azure_AD" path="/authorize" method="GET" doc:name="HTTP">
+			<http:request-builder>
+				<http:query-param paramName="client_id" value="793bfda4-6748-45b6-9d57-98da7b498339"/>
+				<http:query-param paramName="response_type" value="code"/>
+				<http:query-param paramName="redirect_uri" value="https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient"/>
+				<http:query-param paramName="scope" value="offline_access%20user.read%20mail.read"/>
+				<http:query-param paramName="state" value="1234"/>
+				<http:query-param paramName="response_mode" value="form_post"/>
+				<http:header headerName="Accept" value="application/json"/>
+			</http:request-builder>
+		</http:request>
+		<byte-array-to-string-transformer doc:name="Byte Array to String"/>
+		<logger message="#[payload]" level="INFO" doc:name="Logger"/>
+	</flow>
+</mule>

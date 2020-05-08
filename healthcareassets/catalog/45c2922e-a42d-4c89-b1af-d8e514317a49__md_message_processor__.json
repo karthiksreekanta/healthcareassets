@@ -1,0 +1,16 @@
+{
+    "inputMessageMetadata": {
+        "messagePayload": {
+            "connectorName": "#_custom_mule_metadata_type_#",
+            "typeId": "HL7-Sample"
+        }
+    },
+    "outputMessageMetadata": {
+        "messagePayload": {
+            "connectorName": "#_custom_mule_metadata_type_#",
+            "typeId": "Patient-Resource"
+        }
+    },
+    "id": "45c2922e-a42d-4c89-b1af-d8e514317a49",
+    "version": "5.2.0.0"
+}
